@@ -5,7 +5,7 @@ import os
 import random
 import zipfile
 import datetime as dt
-
+from itertools import compress
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import *
@@ -50,27 +50,24 @@ def generate_batch(data, batch_size, num_skips, skip_window):
     global data_index
     assert batch_size % num_skips == 0
     assert num_skips <= 2 * skip_window
-    batch = np.ndarray(shape=(batch_size), dtype=np.int32)
-    context = np.ndarray(shape=(batch_size, 1), dtype=np.int32)
-    span = 2 * skip_window + 1  # [ skip_window input_word skip_window ]
-    buffer = collections.deque(maxlen=span)
+    batch = np.ndarray(shape=(batch_size, num_skips*2), dtype=np.int32)
+    labels = np.ndarray(shape=(batch_size, 1), dtype=np.int32)
+    span = 2 * skip_window + 1 # [ skip_window target skip_window ]
+    buffer = collections.deque(maxlen=span) # used for collecting data[data_index] in the sliding window
+    # collect the first window of words
     for _ in range(span):
         buffer.append(data[data_index])
         data_index = (data_index + 1) % len(data)
-    for i in range(batch_size // num_skips):
-        target = skip_window  # input word at the center of the buffer
-        targets_to_avoid = [skip_window]
-        for j in range(num_skips):
-            while target in targets_to_avoid:
-                target = random.randint(0, span - 1)
-            targets_to_avoid.append(target)
-            batch[i * num_skips + j] = buffer[skip_window]  # this is the input word
-            context[i * num_skips + j, 0] = buffer[target]  # these are the context words
+    # move the sliding window  
+    for i in range(batch_size):
+        mask = [1] * span
+        mask[skip_window] = 0 
+        batch[i, :] = list(compress(buffer, mask)) # all surrounding words
+        labels[i, 0] = buffer[skip_window] # the word at the center 
         buffer.append(data[data_index])
         data_index = (data_index + 1) % len(data)
-    # Backtrack a little bit to avoid skipping words in the end of a batch
-    data_index = (data_index + len(data) - span) % len(data)
-    return batch, context
+
+    return batch,labels
 
 vocabulary_size = 10000
 data, count, dictionary, reverse_dictionary = collect_data(vocabulary_size=vocabulary_size)
@@ -92,10 +89,10 @@ graph = tf.Graph()
 with graph.as_default():
 
   # Input data.
-  train_inputs = tf.placeholder(tf.int32, shape=[batch_size])
+  train_dataset = tf.placeholder(tf.int32, shape=[batch_size, num_skips*2])  
   train_context = tf.placeholder(tf.int32, shape=[batch_size, 1])
   valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
-  print(train_inputs)
+  print(train_dataset)
   print(train_context)
   print(valid_dataset)
 
@@ -103,7 +100,9 @@ with graph.as_default():
   embeddings = tf.Variable(
       tf.random_uniform([vocabulary_size, embedding_size], -1.0, 1.0))
   print(embeddings)
-  embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+  embed = tf.zeros([batch_size, embedding_size])
+  for j in range(num_skips):
+    embed += tf.nn.embedding_lookup(embeddings, train_dataset[:, j])
   print(embed)
 
   # Construct the variables for the softmax
@@ -142,9 +141,8 @@ def run(graph, num_steps):
 
       average_loss = 0
       for step in range(num_steps):
-        batch_inputs, batch_context = generate_batch(data,
-            batch_size, num_skips, skip_window)
-        feed_dict = {train_inputs: batch_inputs, train_context: batch_context}
+        batch_inputs, batch_context = generate_batch(data,batch_size, num_skips, skip_window)
+        feed_dict = {train_dataset: batch_inputs, train_context: batch_context}
 
         # We perform one update step by evaluating the optimizer op (including it
         # in the list of returned values for session.run()
