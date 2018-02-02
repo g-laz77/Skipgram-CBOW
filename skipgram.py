@@ -121,8 +121,8 @@ with graph.as_default():
   cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=hidden_out, labels=train_one_hot))
 
   grad_W, grad_b = tf.gradients(xs=[weights, biases], ys=cross_entropy)
-  new_W = weights.assign(weights - learning_rate * grad_W)
-  new_b = biases.assign(biases - learning_rate * grad_b)
+  weights = weights.assign(weights - learning_rate * grad_W)
+  biases = biases.assign(biases - learning_rate * grad_b)
 
   # Compute the cosine similarity between minibatch examples and all embeddings.
   norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
@@ -150,7 +150,7 @@ def run(graph, num_steps):
 
         # We perform one update step by evaluating the optimizer op (including it
         # in the list of returned values for session.run()
-        _ , _, loss_val = session.run([new_W,new_b, cross_entropy], feed_dict=feed_dict)
+        _ , _, loss_val = session.run([weights,biases, cross_entropy], feed_dict=feed_dict)
         average_loss += loss_val
 
         if step % 2000 == 0:
